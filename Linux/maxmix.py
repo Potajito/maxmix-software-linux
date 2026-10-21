@@ -11,16 +11,22 @@
 # Audio backend is PulseAudio, which also covers PipeWire through its
 # pipewire-pulse compatibility server present on every modern distribution.
 #
+# Device settings (LED colours, sleep, acceleration, volume step, ...) are
+# loaded from ~/.config/maxmix/settings.json, the file the configuration GUI
+# writes; command-line flags override it.
+#
 # Requires Python 3.8+ with `pyserial` and `pulsectl`:
 #   pip install pyserial pulsectl
 # ---------------------------------------------------------------------------
 
 import argparse
 import glob
+import json
 import logging
 import os
 import signal
 import sys
+import tempfile
 import time
 import zlib
 from collections import OrderedDict
@@ -133,43 +139,108 @@ def pack_mode_states():
     return bytes([0, 1, 1, 0, 0])
 
 
+# Built-in defaults, used when neither the settings file nor the command
+# line provides a value. Keys double as the JSON keys of the settings file
+# and must match the Settings slots below.
+SETTINGS_DEFAULTS = {
+    "sleep_after": 5,
+    "acceleration": 60,
+    "continuous_scroll": True,
+    "volume_min_color": 0x0000FF,
+    "volume_max_color": 0xFF0000,
+    "channel_a_color": 0x0000FF,
+    "channel_b_color": 0xFF00FF,
+    "volume_step": 1.0,
+}
+
+
+def settings_config_path():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "maxmix", "settings.json")
+
+
 class Settings:
-    """Device settings the GUI (or CLI args) can change at runtime.
+    """Device settings the GUI (or CLI args / the settings file) can change.
 
     volume_step is host-side only: a multiplier applied to the volume delta
     the firmware reports per detent (1.0 = firmware default).
     """
 
-    __slots__ = (
-        "sleep_after",
-        "acceleration",
-        "continuous_scroll",
-        "volume_min_color",
-        "volume_max_color",
-        "channel_a_color",
-        "channel_b_color",
-        "volume_step",
-    )
+    __slots__ = tuple(SETTINGS_DEFAULTS)
 
-    def __init__(
-        self,
-        sleep_after=5,
-        acceleration=60,
-        continuous_scroll=True,
-        volume_min_color=0x0000FF,
-        volume_max_color=0xFF0000,
-        channel_a_color=0x0000FF,
-        channel_b_color=0xFF00FF,
-        volume_step=1.0,
-    ):
-        self.sleep_after = sleep_after
-        self.acceleration = acceleration
-        self.continuous_scroll = continuous_scroll
-        self.volume_min_color = volume_min_color
-        self.volume_max_color = volume_max_color
-        self.channel_a_color = channel_a_color
-        self.channel_b_color = channel_b_color
-        self.volume_step = volume_step
+    def __init__(self, **kwargs):
+        values = {**SETTINGS_DEFAULTS, **kwargs}
+        for name, value in values.items():
+            setattr(self, name, value)
+
+    def as_dict(self):
+        return {name: getattr(self, name) for name in SETTINGS_DEFAULTS}
+
+
+def _valid_setting(name, value):
+    """Coerce a JSON value to a sane setting, or return None to use the default."""
+    try:
+        if name == "continuous_scroll":
+            return bool(value)
+        if name == "volume_step":
+            value = float(value)
+            return value if 0.1 <= value <= 10.0 else None
+        value = int(value)
+        if name == "sleep_after":
+            return value if 0 <= value <= 255 else None
+        if name == "acceleration":
+            return value if 0 <= value <= 100 else None
+        return value if 0 <= value <= 0xFFFFFF else None  # colours
+    except (TypeError, ValueError):
+        return None
+
+
+def load_saved_settings(path=None):
+    """Read the settings file written by the GUI; returns a validated dict.
+
+    A missing or unreadable file simply yields {} — the daemon must start
+    even when the config directory belongs to another user, etc.
+    """
+    path = path or settings_config_path()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    result = {}
+    for name in SETTINGS_DEFAULTS:
+        if name in data:
+            value = _valid_setting(name, data[name])
+            if value is not None:
+                result[name] = value
+            else:
+                log.warning("Ignoring invalid %s in %s", name, path)
+    return result
+
+
+def save_settings(settings, path=None):
+    """Write settings as JSON so the daemon (and the GUI itself) can reload
+    them on the next start. Atomic: write to a temp file, then rename."""
+    path = path or settings_config_path()
+    directory = os.path.dirname(path)
+    payload = json.dumps(settings.as_dict(), indent=2, sort_keys=True) + "\n"
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as exc:
+        raise OSError("cannot create %s: %s" % (directory, exc))
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".settings-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def apply_volume_step(old_volume, new_volume, ratio):
@@ -922,55 +993,66 @@ def parse_args(argv):
         default="output",
         help="mode the device starts in (default: output)",
     )
+    # The device settings default to None here; after parsing they are filled
+    # from the settings file written by the GUI, falling back to the built-in
+    # defaults. Explicit flags always win.
     parser.add_argument(
         "-s",
         "--sleep-after",
         type=int,
-        default=5,
+        default=None,
         metavar="SECONDS",
-        help="sleep the display after N seconds of inactivity, 0 disables (default: 5)",
+        help="sleep the display after N seconds of inactivity, 0 disables "
+        "(default: saved setting or 5)",
     )
     parser.add_argument(
         "-a",
         "--acceleration",
         type=int,
-        default=60,
+        default=None,
         metavar="PERCENT",
-        help="encoder acceleration 0-100 (default: 60)",
+        help="encoder acceleration 0-100 (default: saved setting or 60)",
     )
     parser.add_argument(
         "--volume-step",
         type=parse_volume_step,
-        default=1.0,
+        default=None,
         metavar="RATIO",
         help="volume change per knob detent as a multiplier of the firmware "
-        "default (0.1-10, default: 1.0; 0.5 = half as fast per detent)",
+        "default (0.1-10; default: saved setting or 1.0; 0.5 = half as fast per detent)",
     )
     parser.add_argument(
         "--no-continuous-scroll",
         dest="continuous_scroll",
         action="store_false",
+        default=None,
         help="do not loop around when scrolling past the first/last item",
     )
     parser.add_argument(
-        "--volume-min-color", type=parse_color, default=0x0000FF, metavar="RRGGBB",
-        help="LED color at volume 0 (default: 0000FF)",
+        "--volume-min-color", type=parse_color, default=None, metavar="RRGGBB",
+        help="LED color at volume 0 (default: saved setting or 0000FF)",
     )
     parser.add_argument(
-        "--volume-max-color", type=parse_color, default=0xFF0000, metavar="RRGGBB",
-        help="LED color at volume 100 (default: FF0000)",
+        "--volume-max-color", type=parse_color, default=None, metavar="RRGGBB",
+        help="LED color at volume 100 (default: saved setting or FF0000)",
     )
     parser.add_argument(
-        "--channel-a-color", type=parse_color, default=0x0000FF, metavar="RRGGBB",
-        help="game mode channel A LED color (default: 0000FF)",
+        "--channel-a-color", type=parse_color, default=None, metavar="RRGGBB",
+        help="game mode channel A LED color (default: saved setting or 0000FF)",
     )
     parser.add_argument(
-        "--channel-b-color", type=parse_color, default=0xFF00FF, metavar="RRGGBB",
-        help="game mode channel B LED color (default: FF00FF)",
+        "--channel-b-color", type=parse_color, default=None, metavar="RRGGBB",
+        help="game mode channel B LED color (default: saved setting or FF00FF)",
     )
     parser.add_argument("-f", "--force", action="store_true", help="connect even to unknown firmware versions")
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose logging (shows protocol traffic)")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    saved = load_saved_settings()
+    for name, default in SETTINGS_DEFAULTS.items():
+        if getattr(args, name) is None:
+            setattr(args, name, saved.get(name, default))
+    return args
 
 
 def main(argv=None):

@@ -4,7 +4,8 @@
 #
 # Embeds the maxmix.py daemon in a worker thread; every setting change is
 # pushed to the device live (the firmware applies LED colours, sleep and
-# encoder behaviour immediately, just like the Windows app).
+# encoder behaviour immediately, just like the Windows app) and saved to
+# ~/.config/maxmix/settings.json, which the plain CLI daemon loads on start.
 #
 # Requires: PySide6 in addition to pyserial + pulsectl.
 # ---------------------------------------------------------------------------
@@ -12,7 +13,9 @@
 import argparse
 import logging
 import os
+import shutil
 import sys
+import tempfile
 import threading
 import time
 
@@ -371,11 +374,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _push_settings(self):
         self.daemon.push_settings()
+        self._save_settings()
         self.log_view.appendPlainText(
             f"{time.strftime('%H:%M:%S')} INFO    settings -> "
             f"min=#{self.daemon.settings.volume_min_color:06x} "
             f"max=#{self.daemon.settings.volume_max_color:06x}"
         )
+
+    def _save_settings(self):
+        try:
+            maxmix.save_settings(self.daemon.settings)
+        except OSError as exc:
+            log.warning("Could not save settings: %s", exc)
 
     def _refresh_previews(self):
         self.preview.set_colors(
@@ -402,6 +412,9 @@ class MainWindow(QtWidgets.QMainWindow):
     # -------------------------------------------------------------- shutdown
 
     def closeEvent(self, event):
+        # Persist even if the debounce timer never fired (change then quit
+        # within 150 ms).
+        self._save_settings()
         self.daemon.stop()
         self.daemon_thread.join(timeout=3)
         event.accept()
@@ -415,6 +428,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def selftest():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    # Redirect the config dir so the persistence checks below never touch
+    # the user's real ~/.config/maxmix/settings.json.
+    config_dir = tempfile.mkdtemp(prefix="maxmix-selftest-config-")
+    os.environ["XDG_CONFIG_HOME"] = config_dir
     app = QtWidgets.QApplication([])
 
     # A port that can never exist keeps the worker daemon off the real serial
@@ -475,7 +492,32 @@ def selftest():
         time.sleep(0.02)
     assert window.daemon.outbox.get(CMD_SETTINGS) == payload
 
+    # settings persist to the config file the plain CLI daemon reads
+    config_path = maxmix.settings_config_path()
+    assert config_path.startswith(config_dir), config_path
+    window._save_settings()
+    saved = maxmix.load_saved_settings(config_path)
+    assert saved["sleep_after"] == 9, saved
+    assert saved["acceleration"] == 75, saved
+    assert saved["continuous_scroll"] is False, saved
+    assert saved["volume_min_color"] == 0x123456, saved
+    assert saved["volume_step"] == 0.5, saved
+
+    # a fresh daemon start (flag parsing in maxmix.py) picks the saved values up
+    reloaded = maxmix.parse_args([])
+    assert reloaded.sleep_after == 9, reloaded.sleep_after
+    assert reloaded.continuous_scroll is False, reloaded.continuous_scroll
+    assert reloaded.volume_step == 0.5, reloaded.volume_step
+    assert reloaded.volume_min_color == 0x123456, reloaded.volume_min_color
+    # the GUI start-up path loads the same file
+    gui_args = parse_args([])
+    assert gui_args.sleep_after == 9, gui_args.sleep_after
+    # explicit flags still override the saved file
+    overridden = maxmix.parse_args(["--sleep-after", "3"])
+    assert overridden.sleep_after == 3, overridden.sleep_after
+
     window.close()
+    shutil.rmtree(config_dir, ignore_errors=True)
     print("GUI SELFTEST PASSED")
     return 0
 
@@ -491,17 +533,13 @@ def parse_args(argv):
     parser.add_argument("--selftest", action="store_true", help="run headless self-test and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose logging")
     cli = parser.parse_args(argv)
-    # the daemon consumes the full CLI namespace of maxmix.py; supply defaults
+    # the daemon consumes the full CLI namespace of maxmix.py; start from the
+    # settings saved by a previous run, falling back to the built-in defaults
     cli.mode = "output"
-    cli.sleep_after = 5
-    cli.acceleration = 60
-    cli.continuous_scroll = True
-    cli.volume_step = 1.0
-    cli.volume_min_color = 0x0000FF
-    cli.volume_max_color = 0xFF0000
-    cli.channel_a_color = 0x0000FF
-    cli.channel_b_color = 0xFF00FF
     cli.force = False
+    saved = maxmix.load_saved_settings()
+    for name, default in maxmix.SETTINGS_DEFAULTS.items():
+        setattr(cli, name, saved.get(name, default))
     return cli
 
 

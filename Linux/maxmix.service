@@ -2,7 +2,9 @@
 #
 # 1. Copy this file to ~/.config/systemd/user/maxmix.service
 # 2. Edit the ExecStart path below to point at your checkout (use the venv
-#    python if you made one) and add any flags you want.
+#    python if you made one). Device settings come from
+#    ~/.config/maxmix/settings.json (written by maxmix_gui.py), so no flags
+#    are needed; add flags only to override the saved settings.
 # 3. Enable and start:
 #      systemctl --user daemon-reload
 #      systemctl --user enable --now maxmix.service

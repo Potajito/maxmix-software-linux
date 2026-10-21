@@ -66,16 +66,17 @@ on top:
   scales each knob delta and re-syncs the device display to the real
   value), continuous scroll.
 
-Every change is pushed to the device immediately, like the Windows app.
+Every change is pushed to the device immediately, like the Windows app,
+and saved to `~/.config/maxmix/settings.json`.
 
 The practical differences:
 
 | | CLI (`maxmix.py`) | GUI (`maxmix_gui.py`) |
 |---|---|---|
 | Purpose | Run permanently, control audio | Configure the device's look & feel |
-| Settings source | Command-line flags | Clicks in a window |
+| Settings source | `~/.config/maxmix/settings.json`, flags override | Clicks in a window |
 | Volume control | ✅ yes | ✅ yes (same embedded daemon) |
-| LED colours / step size / sleep / acceleration | Via flags | Via widgets, applied live |
+| LED colours / step size / sleep / acceleration | Via settings file or flags | Via widgets, applied live |
 | Runs headless (server, autostart) | ✅ yes | ❌ needs a display |
 | Dependencies | `pyserial`, `pulsectl` | + `PySide6` |
 | AppImage size | ~11 MB | ~68 MB |
@@ -84,10 +85,16 @@ The practical differences:
 > run only **one** of them at a time, or the second one will report
 > *device not found*.
 
-A typical setup: use the GUI once to dial in your colours and step size,
-then quit it and run the plain CLI daemon as a systemd service for daily
-use. (Note the daemon does not persist GUI settings across restarts — pass
-equivalent flags to `maxmix.py`, or keep the GUI running instead.)
+### Settings persistence
+
+Both programs read their device settings from
+`~/.config/maxmix/settings.json`; the GUI keeps that file updated
+whenever you change a setting (and on quit). So the typical setup is:
+use the GUI once to dial in your colours and step size, quit it, and run
+the plain CLI daemon with **no flags at all** — it starts with exactly
+the settings you chose. Command-line flags still override the file for
+one run, which is handy in the systemd `ExecStart` line. Delete the file
+to go back to the built-in defaults.
 
 ## Portable AppImages
 
@@ -157,6 +164,11 @@ Headless self-test: `maxmix_gui.py --selftest`.
 
 ## CLI options
 
+For the device settings (everything below except `--port`, `--mode`,
+`--force` and `--verbose`) the "Default" column is what applies when the
+settings file has no value for it; a saved setting takes precedence, and
+an explicit flag takes precedence over both.
+
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-p, --port` | Serial port of the device | auto-detect |
@@ -188,13 +200,16 @@ journalctl --user -u maxmix.service -f   # follow logs
 ```bash
 .venv/bin/python test_maxmix_protocol.py
 .venv/bin/python test_maxmix_sessions.py
+.venv/bin/python test_maxmix_settings.py
 ```
 
 The first spawns a fake firmware on a pseudo-terminal and verifies the
 handshake, the initial session push, keepalives, and that a knob turn
 actually changes the default sink volume. The second unit-tests the
 session-list bookkeeping (e.g. the "wrong output after locking the screen"
-class of bug, when sinks vanish and come back with new indexes).
+class of bug, when sinks vanish and come back with new indexes). The third
+unit-tests the settings file round-trip: GUI saves, daemon loads, flags
+override, corrupt values fall back.
 
 ## How it works
 
