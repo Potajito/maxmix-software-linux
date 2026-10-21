@@ -23,6 +23,13 @@ LED colours, sleep, encoder acceleration and more.
 > Use at your own risk. Read the code before you trust it. Issues and
 > pull requests (human- or AI-authored) are welcome.
 
+## Download
+
+Ready-to-run AppImages (CLI daemon and configuration GUI) are on the
+[Releases page](https://github.com/Potajito/maxmix-software-linux/releases) —
+`chmod +x` and run, nothing to install. Building from source is covered
+[below](#quick-start).
+
 ## What's in the box
 
 | File | Purpose |
