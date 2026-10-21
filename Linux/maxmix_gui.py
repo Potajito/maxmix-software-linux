@@ -417,9 +417,13 @@ def selftest():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QtWidgets.QApplication([])
 
+    # A port that can never exist keeps the worker daemon off the real serial
+    # ports: with an empty port it would glob the actual devices, and if it
+    # won the handshake race against a running instance it would drain its
+    # own outbox, breaking the outbox assertion below.
     args = argparse.Namespace(
-        port="", mode="output", sleep_after=5, acceleration=60, continuous_scroll=True,
-        volume_min_color=0x0000FF, volume_max_color=0xFF0000,
+        port="/dev/maxmix-selftest-none", mode="output", sleep_after=5, acceleration=60,
+        continuous_scroll=True, volume_min_color=0x0000FF, volume_max_color=0xFF0000,
         channel_a_color=0x0000FF, channel_b_color=0xFF00FF, force=False, verbose=False,
     )
     window = MainWindow(args)

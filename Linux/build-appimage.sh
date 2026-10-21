@@ -64,8 +64,13 @@ fi
 make_appdir maxmixd   AppDir       true
 make_appdir maxmix-gui AppDir-GUI  false
 
-ARCH=x86_64 /tmp/appimagetool AppDir        MaxMix-x86_64.AppImage
-ARCH=x86_64 /tmp/appimagetool AppDir-GUI    MaxMix-GUI-x86_64.AppImage
+# Build to a temp name first: rename(2) works even when a previous build is
+# still running (e.g. the daemon autostarts from the CLI AppImage), while
+# overwriting the file in place fails with "Text file busy".
+ARCH=x86_64 /tmp/appimagetool AppDir        MaxMix-x86_64.AppImage.part
+ARCH=x86_64 /tmp/appimagetool AppDir-GUI    MaxMix-GUI-x86_64.AppImage.part
+mv -f MaxMix-x86_64.AppImage.part      MaxMix-x86_64.AppImage
+mv -f MaxMix-GUI-x86_64.AppImage.part  MaxMix-GUI-x86_64.AppImage
 
 echo
 echo "Built:"
