@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# PyInstaller / AppImage build output
+build/
+dist/
+AppDir/
+AppDir-GUI/
+*.AppImage
+*.spec

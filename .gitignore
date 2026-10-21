@@ -27,3 +27,12 @@ Desktop/Installer/*.back.aip
 # Build System
 BuildSystem/build
 BuildSystem/release
+
+# Linux companion tooling
+Linux/.venv/
+Linux/build/
+Linux/dist/
+Linux/AppDir/
+Linux/__pycache__/
+Linux/*.AppImage
+Linux/*.spec

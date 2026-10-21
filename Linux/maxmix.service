@@ -1,0 +1,24 @@
+# systemd user service for the MaxMix daemon.
+#
+# 1. Copy this file to ~/.config/systemd/user/maxmix.service
+# 2. Edit the ExecStart path below to point at your checkout (use the venv
+#    python if you made one) and add any flags you want.
+# 3. Enable and start:
+#      systemctl --user daemon-reload
+#      systemctl --user enable --now maxmix.service
+#      journalctl --user -u maxmix.service -f   # follow logs
+
+[Unit]
+Description=MaxMix USB volume controller daemon
+# Make sure a PulseAudio/PipeWire server is up before we start.
+After=pipewire-pulse.service pulseaudio.service sound.target
+Wants=pipewire-pulse.service
+
+[Service]
+# Example with a project venv - adjust to your install:
+ExecStart=%h/Documents/maxmix-software/Linux/.venv/bin/python %h/Documents/maxmix-software/Linux/maxmix.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
