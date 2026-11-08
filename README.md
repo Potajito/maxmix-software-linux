@@ -110,10 +110,10 @@ chmod +x MaxMix-x86_64.AppImage
 ```
 
 They only need what any desktop already has: `libpulse` (audio control),
-access to `/dev/ttyUSB*` / `/dev/ttyACM*` (`dialout` group), and libfuse2
-to mount the AppImage — or run with `APPIMAGE_EXTRACT_AND_RUN=1` on
-systems without it. They are built on a recent distribution, so they run on
-that glibc or newer.
+access to the serial port (one-time setup, see
+[Serial port access](#serial-port-access)), and libfuse2 to mount the
+AppImage — or run with `APPIMAGE_EXTRACT_AND_RUN=1` on systems without it.
+They are built on a recent distribution, so they run on that glibc or newer.
 
 For autostart, point the systemd service at the AppImage:
 
@@ -152,12 +152,32 @@ CH340, or `/dev/ttyACM*` for 32u4-based boards) and starts pushing your
 audio sessions to it. Turn the knob — volume changes. Exactly like on
 Windows.
 
-Requires firmware 1.5.0 – 1.5.6 (same constraint as the Windows app) and
-read/write access to the serial port — add yourself to the `dialout` group:
+Requires firmware 1.5.0 – 1.5.6 (same constraint as the Windows app).
+
+## Serial port access
+
+The device appears as a USB serial port owned by root, and the
+"standard" ways of granting access have both been observed failing
+silently on modern distros: `uaccess` ACLs stopped being applied by a
+systemd update on Bazzite (device simply dead, no error anywhere), and
+`sudo usermod -aG dialout $USER` exits 0 without doing anything on
+OSTree-based systems (Bazzite, Silverblue — their base groups live in
+`/usr/lib/group`, which usermod doesn't edit).
+
+So the supported path is a static udev rule — no groups, no login
+sessions, no logout afterwards — installed by one script:
 
 ```bash
-sudo usermod -aG dialout $USER    # log out/in afterwards
+sudo Linux/setup-permissions.sh   # install rule, applies to plugged devices immediately
 ```
+
+It writes `/etc/udev/rules.d/99-maxmix.rules` (mode `0666` on the exact
+device IDs, plus a `/dev/maxmix` symlink), reloads udev, and re-triggers
+devices that are already plugged in. Verify with `ls -l /dev/maxmix`
+(mode should read `crw-rw-rw-`). To lock access down to a group instead,
+set `MODE:="0660"` and `GROUP:="dialout"` in that rule and add yourself
+to `dialout` (`sudo usermod -aG dialout $USER`, then verify membership
+with `getent group dialout` and log out/in).
 
 ### From source (GUI)
 
@@ -244,7 +264,12 @@ by process.
 ## Troubleshooting
 
 - **Device not found** — check `ls /dev/ttyUSB* /dev/ttyACM*`, try `-p`.
-- **Permission denied** — `dialout` group (see above).
+- **Permission denied** — run `sudo Linux/setup-permissions.sh`
+  ([Serial port access](#serial-port-access)). The daemon prints this fix
+  itself once when it hits a permission error. If you instead added
+  yourself to `dialout`, confirm it took effect with
+  `getent group dialout` and log out/in — `usermod` can exit 0 without
+  changing anything on OSTree-based distros.
 - **Screen shows the logo and the knob does nothing** — the device is in
   splash mode; that means no app is talking to it. Run the daemon with `-v`
   and check you see `TX 4 01…` (mode byte `01` = output) after connecting.

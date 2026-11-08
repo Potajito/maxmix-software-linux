@@ -517,6 +517,7 @@ class MaxMixDaemon:
         self.sessions = []  # [Session] for the active mode
         self.next_pulse_poll = 0.0
         self.next_connect_attempt = 0.0
+        self.permission_hint_shown = False
 
     # ---------------------------------------------------------------- serial
 
@@ -578,6 +579,18 @@ class MaxMixDaemon:
             self.ser.reset_output_buffer()
         except Exception as exc:
             log.debug("Cannot open %s: %s", port, exc)
+            if "Permission denied" in str(exc):
+                # Permission problems never heal by themselves; state the fix
+                # once, loudly, instead of repeating a debug line every second.
+                if not self.permission_hint_shown:
+                    self.permission_hint_shown = True
+                    log.warning(
+                        "Serial port %s is not accessible for this user. Fix with: "
+                        "sudo %s/setup-permissions.sh  (or: sudo usermod -aG dialout "
+                        "$USER, then log out/in). See the README 'Serial port access' section.",
+                        port,
+                        os.path.dirname(os.path.abspath(__file__)),
+                    )
             self.close_serial()
             return None
 
