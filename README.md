@@ -136,10 +136,16 @@ icon theme, so the GUI installs `icon.png` once to
 ### From source (CLI daemon)
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+./ensure-venv.sh                  # creates .venv (or repairs it)
 .venv/bin/python maxmix.py
 ```
+
+`ensure-venv.sh` is idempotent and self-healing: it creates `.venv` with
+everything needed for the daemon, the GUI and AppImage builds, and — the
+point — it rebuilds it automatically after an OS update replaces the
+system Python (a minor-version bump silently breaks an existing venv:
+the interpreter runs but can no longer see its packages). Run it any
+time you're unsure; when the venv is healthy it exits instantly.
 
 The daemon auto-detects the device (it shows up as `/dev/ttyUSB*` with a
 CH340, or `/dev/ttyACM*` for 32u4-based boards) and starts pushing your
@@ -156,7 +162,7 @@ sudo usermod -aG dialout $USER    # log out/in afterwards
 ### From source (GUI)
 
 ```bash
-.venv/bin/pip install -r requirements-gui.txt
+./ensure-venv.sh                  # no-op if .venv already works
 .venv/bin/python maxmix_gui.py
 ```
 
@@ -198,6 +204,7 @@ journalctl --user -u maxmix.service -f   # follow logs
 ## Testing without hardware
 
 ```bash
+./ensure-venv.sh                  # in case an OS update broke .venv
 .venv/bin/python test_maxmix_protocol.py
 .venv/bin/python test_maxmix_sessions.py
 .venv/bin/python test_maxmix_settings.py

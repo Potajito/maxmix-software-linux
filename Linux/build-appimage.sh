@@ -13,10 +13,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # --- Python bundle ---------------------------------------------------------
-if [ ! -x .venv/bin/python ]; then
-    python3 -m venv .venv
-    .venv/bin/pip install -q pyserial pulsectl pyinstaller PySide6
-fi
+# ensure-venv.sh rebuilds .venv when an OS update broke it, not just when
+# it is absent (see the header comment there).
+./ensure-venv.sh
 
 .venv/bin/pyinstaller --clean --noconfirm --onedir --name maxmixd --console maxmix.py
 .venv/bin/pyinstaller --clean --noconfirm --onedir --name maxmix-gui --windowed \
